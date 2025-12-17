@@ -3,19 +3,20 @@ const http = require('http');
 const WebSocket = require('ws');
 const cors = require('cors');
 const { v4: uuidv4 } = require('uuid');
+const path = require('path');
 
 const app = express();
 app.use(cors());
 app.use(express.json());
-app.use(express.static('public')); // Serve static files
+app.use(express.static(path.join(__dirname, 'public'))); // Serve static files with absolute path
 
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
 
-// HTTP Health Check removed to serve frontend at /
-// app.get('/', (req, res) => {
-//     res.send({ status: 'active', peers: wss.clients.size });
-// });
+// Explicitly serve index.html for root route to avoid 404s
+app.get('/', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
 
 /**
  * Data Structures
