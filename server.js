@@ -7,6 +7,7 @@ const { v4: uuidv4 } = require('uuid');
 const app = express();
 app.use(cors());
 app.use(express.json());
+app.use(express.static('public')); // Serve static files
 
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
@@ -32,6 +33,9 @@ wss.on('connection', (ws) => {
     // until it sends an 'announce' or 'identify' message.
     
     ws.id = uuidv4();
+    ws.isAlive = true; // Heartbeat init
+    ws.on('pong', () => { ws.isAlive = true; }); // Heartbeat response
+
     peerSockets.set(ws.id, ws);
 
     console.log(`Peer connected: ${ws.id}`);
@@ -132,4 +136,17 @@ function cleanupPeer(peerId) {
 const PORT = process.env.PORT || 4000;
 server.listen(PORT, () => {
     console.log(`Tracker server running on port ${PORT}`);
+});
+
+// Heartbeat to keep connections alive (Render/Nginx timeouts)
+const interval = setInterval(function ping() {
+    wss.clients.forEach(function each(ws) {
+        if (ws.isAlive === false) return ws.terminate();
+        ws.isAlive = false;
+        ws.ping();
+    });
+}, 30000);
+
+wss.on('close', function close() {
+    clearInterval(interval);
 });
