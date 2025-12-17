@@ -39,7 +39,11 @@ wss.on('connection', (ws) => {
 
     peerSockets.set(ws.id, ws);
 
-    console.log(`Peer connected: ${ws.id}`);
+    const time = new Date().toLocaleTimeString();
+    console.log(`[${time}] Peer connected: ${ws.id}`);
+    
+    // Broadcast to others
+    broadcast({ type: 'peer-joined', peerId: ws.id }, ws.id);
 
     ws.send(JSON.stringify({ type: 'welcome', peerId: ws.id }));
 
@@ -55,8 +59,18 @@ wss.on('connection', (ws) => {
     ws.on('close', () => {
         console.log(`Peer disconnected: ${ws.id}`);
         cleanupPeer(ws.id);
+        // Broadcast disconnect
+        broadcast({ type: 'peer-left', peerId: ws.id });
     });
 });
+
+function broadcast(data, excludePeerId = null) {
+    wss.clients.forEach(client => {
+        if (client.readyState === WebSocket.OPEN && client.id !== excludePeerId) {
+            client.send(JSON.stringify(data));
+        }
+    });
+}
 
 function handleMessage(ws, data) {
     switch (data.type) {
