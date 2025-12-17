@@ -12,10 +12,10 @@ app.use(express.static('public')); // Serve static files
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
 
-// HTTP Health Check
-app.get('/', (req, res) => {
-    res.send({ status: 'active', peers: wss.clients.size });
-});
+// HTTP Health Check removed to serve frontend at /
+// app.get('/', (req, res) => {
+//     res.send({ status: 'active', peers: wss.clients.size });
+// });
 
 /**
  * Data Structures
