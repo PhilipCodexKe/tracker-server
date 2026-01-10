@@ -57,6 +57,9 @@ function connect() {
                     log(`Identity assigned: ${data.peerId}`, 'success');
                     document.title = `NODE: ${data.peerId.substring(0, 8)}...`;
                     break;
+                case 'greeting':
+                    log(data.message, 'success');
+                    break;
                 case 'error':
                     log(`Error: ${data.message}`, 'error');
                     break;

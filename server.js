@@ -46,6 +46,7 @@ wss.on('connection', (ws) => {
     broadcast({ type: 'peer-joined', peerId: ws.id }, ws.id);
 
     ws.send(JSON.stringify({ type: 'welcome', peerId: ws.id }));
+    ws.send(JSON.stringify({ type: 'greeting', message: "Hello welcome I'm the tracker" }));
 
     ws.on('message', (message) => {
         try {
