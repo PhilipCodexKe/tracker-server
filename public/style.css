@@ -59,6 +59,43 @@ body, html {
     justify-content: flex-end; /* Start from bottom */
 }
 
+/* Peers List Styling */
+.peers-header {
+    margin-top: 15px;
+    border-bottom: 1px dashed var(--green);
+    padding-bottom: 5px;
+    margin-bottom: 10px;
+    text-shadow: var(--glow);
+    text-transform: uppercase;
+    color: #ffb86c; /* Warning Color */
+}
+
+.peers-list {
+    max-height: 300px; /* Increased height for vertical blocks */
+    overflow-y: auto;
+    margin-bottom: 20px;
+    border-left: 2px solid var(--dark-green);
+    padding-left: 15px;
+}
+
+.peer-block {
+    margin-bottom: 15px;
+    font-size: 0.9em;
+}
+
+.peer-deco {
+    color: #ffb86c; /* Warning Color/Decoration */
+    text-shadow: 0 0 2px #ffb86c;
+}
+
+.peer-info {
+    color: #8be9fd;
+    text-shadow: 0 0 2px #8be9fd;
+    margin-left: 10px; /* Indent info */
+    white-space: pre-wrap; /* allow wrapping if ID is long */
+    word-break: break-all; /* ensure long IDs break */
+}
+
 .line {
     margin: 2px 0;
     text-shadow: var(--glow);

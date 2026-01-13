@@ -22,31 +22,109 @@ app.get('/', (req, res) => {
  * Data Structures
  * files: Map<InfoHash, Set<PeerId>>
  * peerSockets: Map<PeerId, WebSocket>
+ * peerInfo: Map<PeerId, { name: string, ip: string }>
  */
 const files = new Map();
 const peerSockets = new Map();
+const peerInfo = new Map();
 
-wss.on('connection', (ws) => {
-    // Assign a temporary ID until they identify themselves, or persist this.
-    // Ideally, the client sends us their PeerID, or we generate one.
-    // For this implementation, we'll assign one if not provided, 
-    // but the handshake is cleaner if we just consider this socket "anonymous" 
-    // until it sends an 'announce' or 'identify' message.
+let anonymousCounter = 1;
+
+function ipToNumber(ip) {
+    if (!ip) return 1;
+    // Remove all non-numeric characters (simple hash-ish way or just use octets)
+    // For IPv4 "192.168.1.1" -> 19216811
+    // For IPv6 it might be huge, so let's stick to a safe numeric generation
+    const cleanIp = ip.replace(/\D/g, '') || '1';
+    // Use BigInt to handle potential length, though simple JS number usually suffices for this logic
+    return parseInt(cleanIp.substring(0, 15), 10); 
+}
+
+function normalizeIp(ip) {
+    if (!ip) return '127.0.0.1';
+    ip = ip.trim();
+    if (ip === '::1') return '127.0.0.1';
+    if (ip.startsWith('::ffff:')) return ip.substring(7);
+    return ip;
+}
+
+wss.on('connection', (ws, req) => {
+    // 1. Get IP Address
+    let rawIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress || '127.0.0.1';
+    if (Array.isArray(rawIp)) rawIp = rawIp[0];
+    const ip = normalizeIp(rawIp);
     
-    ws.id = uuidv4();
-    ws.isAlive = true; // Heartbeat init
-    ws.on('pong', () => { ws.isAlive = true; }); // Heartbeat response
+    // 2. Generate ID: Random * IP-based-number to get 16-digit ID
+    // We use a large random base to ensure we have enough digits
+    // IP Number
+    const ipNum = BigInt(ipToNumber(ip));
+    
+    // Large Random (composite to ensure high magnitude)
+    const r1 = Math.floor(Math.random() * 1000000000);
+    const r2 = Math.floor(Math.random() * 1000000000);
+    const randomBase = BigInt(r1) * BigInt(r2);
+    
+    // Mix them
+    const generatedIdVal = randomBase * (ipNum || 1n);
+    
+    // Convert to Hex, Pad, Slice to 16
+    const newPeerId = generatedIdVal.toString(16).padStart(16, '0').slice(-16).toUpperCase(); 
 
+    ws.id = newPeerId;
+    ws.isAlive = true; 
+    ws.on('pong', () => { ws.isAlive = true; }); 
+
+    // 3. Default Name
+    const defaultName = `Anonymous ${anonymousCounter++}`;
+    
+    // Store
     peerSockets.set(ws.id, ws);
+    peerInfo.set(ws.id, { name: defaultName, ip: ip });
 
     const time = new Date().toLocaleTimeString();
-    console.log(`[${time}] Peer connected: ${ws.id}`);
+    console.log(`[${time}] Peer connected: ${ws.id} (${ip})`);
     
     // Broadcast to others
-    broadcast({ type: 'peer-joined', peerId: ws.id }, ws.id);
+    broadcast({ 
+        type: 'peer-joined', 
+        peerId: ws.id,
+        name: defaultName,
+        ip: ip
+    }, ws.id);
 
-    ws.send(JSON.stringify({ type: 'welcome', peerId: ws.id }));
+    // Welcome the new peer
+    ws.send(JSON.stringify({ 
+        type: 'welcome', 
+        peerId: ws.id,
+        name: defaultName,
+        ip: ip
+    }));
+    
+    // Explicitly send "your-info" (Name & ID) as requested for the App
+    ws.send(JSON.stringify({
+        type: 'your-info',
+        name: defaultName,
+        peerId: ws.id,
+        ip: ip
+    }));
+
     ws.send(JSON.stringify({ type: 'greeting', message: "Hello welcome I'm the tracker" }));
+
+    // Send existing peers list to the new peer so they can populate their UI
+    const existingPeers = [];
+    peerSockets.forEach((socket, id) => {
+        if (id !== ws.id && socket.readyState === WebSocket.OPEN) {
+            const info = peerInfo.get(id);
+            existingPeers.push({
+                id: id,
+                name: info ? info.name : 'Unknown',
+                ip: info ? info.ip : 'Unknown'
+            });
+        }
+    });
+    if (existingPeers.length > 0) {
+        ws.send(JSON.stringify({ type: 'peer-list-snapshot', peers: existingPeers }));
+    }
 
     ws.on('message', (message) => {
         try {
@@ -59,9 +137,18 @@ wss.on('connection', (ws) => {
 
     ws.on('close', () => {
         console.log(`Peer disconnected: ${ws.id}`);
+        // Capture info before cleanup for broadcast
+        const info = peerInfo.get(ws.id);
+        const name = info ? info.name : 'Unknown';
+
         cleanupPeer(ws.id);
+        
         // Broadcast disconnect
-        broadcast({ type: 'peer-left', peerId: ws.id });
+        broadcast({ 
+            type: 'peer-left', 
+            peerId: ws.id,
+            name: name
+        });
     });
 });
 
@@ -75,6 +162,28 @@ function broadcast(data, excludePeerId = null) {
 
 function handleMessage(ws, data) {
     switch (data.type) {
+        case 'identify':
+            // Client identifying themselves with a name
+            if (data.name) {
+                const info = peerInfo.get(ws.id);
+                if (info) {
+                    info.name = data.name;
+                    peerInfo.set(ws.id, info);
+                    
+                    // Broadcast update
+                    broadcast({
+                        type: 'peer-updated',
+                        peerId: ws.id,
+                        name: info.name,
+                        ip: info.ip
+                    });
+                    
+                    // Acknowledge (optional, but good for logs)
+                    ws.send(JSON.stringify({ type: 'identity-confirmed', name: info.name }));
+                }
+            }
+            break;
+
         case 'announce':
             // Client says: "I have this file"
             // Payload: { infoHash: string }
@@ -137,6 +246,7 @@ function handleMessage(ws, data) {
 function cleanupPeer(peerId) {
     // Remove from socket map
     peerSockets.delete(peerId);
+    peerInfo.delete(peerId);
 
     // Remove from all file swarms
     for (const [infoHash, swarm] of files.entries()) {

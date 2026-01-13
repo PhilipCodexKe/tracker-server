@@ -10,6 +10,7 @@ document.querySelector('.ip').innerText = `NODE: ${window.location.hostname.toUp
 const logHistory = [];
 
 let ws;
+let myPeerId;
 
 function updateClock() {
     const now = new Date();
@@ -38,6 +39,32 @@ function log(message, type = 'info') {
     output.scrollTop = output.scrollHeight;
 }
 
+const peersListEl = document.getElementById('peers-list');
+// Map<PeerId, {name: string, ip: string}>
+const connectedPeers = new Map();
+
+function updatePeersList() {
+    peersListEl.innerHTML = '';
+    
+    if (connectedPeers.size === 0) {
+        peersListEl.innerHTML = '<div style="opacity:0.5; font-style:italic;">Scanning for peers...</div>';
+        return;
+    }
+
+    connectedPeers.forEach((info, id) => {
+        const item = document.createElement('div');
+        item.className = 'peer-block';
+        item.innerHTML = `
+            <div class="peer-deco">[----------]</div>
+            <div class="peer-info">NAME: ${info.name}</div>
+            <div class="peer-info">IP:   ${info.ip}</div>
+            <div class="peer-info">ID:   ${id}</div>
+            <div class="peer-deco">[----------]</div>
+        `;
+        peersListEl.appendChild(item);
+    });
+}
+
 function connect() {
     log('Initiating handshake protocol...', 'info');
     
@@ -56,21 +83,62 @@ function connect() {
                 case 'welcome':
                     log(`Identity assigned: ${data.peerId}`, 'success');
                     document.title = `NODE: ${data.peerId.substring(0, 8)}...`;
+                    
+                    myPeerId = data.peerId;
+                    
+                    // Add Self to List
+                    connectedPeers.set(data.peerId, { 
+                        name: data.name + " (YOU)", 
+                        ip: data.ip 
+                    });
+                    updatePeersList();
                     break;
+
                 case 'greeting':
                     log(data.message, 'success');
                     break;
                 case 'error':
                     log(`Error: ${data.message}`, 'error');
                     break;
+                
+                // Peer Management Events
                 case 'peer-joined':
-                    log(`New Peer Detected: ${data.peerId}`, 'system');
+                    log(`New Peer Detected: ${data.name} (${data.peerId})`, 'system');
+                    connectedPeers.set(data.peerId, { name: data.name, ip: data.ip });
+                    updatePeersList();
                     break;
+                case 'peer-updated':
+                    // Name change or other update
+                    log(`Peer Updated: ${data.name} (${data.peerId})`, 'system');
+                    connectedPeers.set(data.peerId, { name: data.name, ip: data.ip });
+                    updatePeersList();
+                    break;
+                case 'identity-confirmed':
+                    // We changed our own name
+                    log(`Identity Confirmed: ${data.name}`, 'success');
+                    if (myPeerId && connectedPeers.has(myPeerId)) {
+                        const myInfo = connectedPeers.get(myPeerId);
+                        myInfo.name = data.name + " (YOU)";
+                        connectedPeers.set(myPeerId, myInfo);
+                        updatePeersList();
+                    }
+                    break;
+
                 case 'peer-left':
-                    log(`Peer Disconnected: ${data.peerId}`, 'warning');
+                    log(`Peer Disconnected: ${data.name || data.peerId}`, 'warning');
+                    connectedPeers.delete(data.peerId);
+                    updatePeersList();
                     break;
+                case 'peer-list-snapshot':
+                    // Initial load of existing peers
+                    data.peers.forEach(p => {
+                        connectedPeers.set(p.id, { name: p.name, ip: p.ip });
+                    });
+                    updatePeersList();
+                    break;
+
                 case 'peers':
-                    log(`Swarm update: ${data.peers.length} active peers`, 'info');
+                    log(`Swarm update: ${data.peers.length} active peers for file`, 'info');
                     break;
                 case 'signal':
                     log(`Encrypted signal received from ${data.from}`, 'info');
