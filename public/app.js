@@ -132,7 +132,7 @@ function connect() {
                 case 'peer-list-snapshot':
                     // Initial load of existing peers
                     data.peers.forEach(p => {
-                        connectedPeers.set(p.id, { name: p.name, ip: p.ip });
+                        connectedPeers.set(p.peerId, { name: p.name, ip: p.ip });
                     });
                     updatePeersList();
                     break;

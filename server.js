@@ -116,15 +116,15 @@ wss.on('connection', (ws, req) => {
         if (id !== ws.id && socket.readyState === WebSocket.OPEN) {
             const info = peerInfo.get(id);
             existingPeers.push({
-                id: id,
+                peerId: id,
                 name: info ? info.name : 'Unknown',
                 ip: info ? info.ip : 'Unknown'
             });
         }
     });
-    if (existingPeers.length > 0) {
-        ws.send(JSON.stringify({ type: 'peer-list-snapshot', peers: existingPeers }));
-    }
+    
+    // Always send the snapshot, even if empty, so client knows it has received the list
+    ws.send(JSON.stringify({ type: 'peer-list-snapshot', peers: existingPeers }));
 
     ws.on('message', (message) => {
         try {
