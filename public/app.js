@@ -166,5 +166,36 @@ function connect() {
     };
 }
 
+// Chat Input Handling
+const chatInput = document.getElementById('chat-input');
+chatInput.focus();
+
+chatInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+        const text = chatInput.value.trim();
+        if (text) {
+            // Handle special commands here if needed, or just default to chat
+            
+            // Send Chat to Server
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({
+                    type: 'chat',
+                    message: text
+                }));
+                
+                // Server excludes sender from broadcast, so we log it ourselves
+                log(`[CHAT] Me: ${text}`, 'warning');
+                
+                chatInput.value = '';
+            } else {
+                log('Error: Not connected to server', 'error');
+            }
+        }
+    }
+});
+
+// Keep focus
+document.addEventListener('click', () => chatInput.focus());
+
 // Start
 connect();

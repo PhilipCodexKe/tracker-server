@@ -125,15 +125,16 @@ body, html {
     text-shadow: var(--glow);
 }
 
-.cursor {
-    animation: blink 1s infinite;
+#chat-input {
+    background: transparent;
+    border: none;
+    color: var(--green);
+    font-family: 'VT323', monospace;
+    font-size: 1.2rem;
+    flex-grow: 1;
+    outline: none;
+    caret-color: var(--green);
     text-shadow: var(--glow);
-    font-weight: bold;
-}
-
-@keyframes blink {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0; }
 }
 
 @media (max-width: 600px) {
