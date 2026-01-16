@@ -222,7 +222,7 @@ function handleMessage(ws, data) {
             break;
 
         case 'chat':
-            // Client sending a public chat message
+            // Client sending a public chat message (Standard Tracker Client)
             if (data.message) {
                 const info = peerInfo.get(ws.id);
                 const senderName = info ? info.name : 'Unknown';
@@ -234,7 +234,31 @@ function handleMessage(ws, data) {
                     message: data.message,
                     from: senderName,
                     peerId: ws.id
-                }, ws.id); // Exclude sender from broadcast (they know they sent it)
+                }, ws.id); 
+            }
+            break;
+
+        case 'chat-message':
+            // Client sending a chat message (From APK/P2PServer)
+            // Payload is likely an object from ChatHandler
+            if (data.payload) {
+                const info = peerInfo.get(ws.id);
+                const senderName = info ? info.name : 'Unknown';
+                
+                // Extract text from payload (handle common structures)
+                let text = data.payload.text || data.payload.message || data.payload.content;
+                if (!text && typeof data.payload === 'string') text = data.payload;
+
+                if (text) {
+                    console.log(`[CHAT-APK] ${senderName}: ${text}`);
+                    
+                    broadcast({
+                        type: 'chat',
+                        message: text,
+                        from: senderName,
+                        peerId: ws.id
+                    }, ws.id);
+                }
             }
             break;
 
