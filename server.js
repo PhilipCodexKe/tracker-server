@@ -221,6 +221,23 @@ function handleMessage(ws, data) {
             }
             break;
 
+        case 'chat':
+            // Client sending a public chat message
+            if (data.message) {
+                const info = peerInfo.get(ws.id);
+                const senderName = info ? info.name : 'Unknown';
+                
+                console.log(`[CHAT] ${senderName}: ${data.message}`);
+                
+                broadcast({
+                    type: 'chat',
+                    message: data.message,
+                    from: senderName,
+                    peerId: ws.id
+                }, ws.id); // Exclude sender from broadcast (they know they sent it)
+            }
+            break;
+
         case 'signal':
             // Client wants to send WebRTC signal to another peer
             // Payload: { to: TargetPeerId, signal: any }

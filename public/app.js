@@ -137,6 +137,10 @@ function connect() {
                     updatePeersList();
                     break;
 
+                case 'chat':
+                    log(`[CHAT] ${data.from}: ${data.message}`, 'warning'); // Using warning color (yellowish) for visibility
+                    break;
+
                 case 'peers':
                     log(`Swarm update: ${data.peers.length} active peers for file`, 'info');
                     break;
