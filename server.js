@@ -40,82 +40,17 @@ function normalizeIp(ip) {
     return ip;
 }
 
-wss.on('connection', (ws, req) => {
-    // 1. Get IP Address - REMOVED OLD LOGIC
-    // We do NOT guess the IP from the socket anymore. We wait for the 'register' message.
-    const ip = null; 
-    
-    // 2. Generate ID: Random * IP-based-number to get 16-digit ID
-    // We use a large random base to ensure we have enough digits
-    // IP Number - Default to 1 since we don't have IP yet
-    const ipNum = 1n;
-    
-    // Large Random (composite to ensure high magnitude)
-    const r1 = Math.floor(Math.random() * 1000000000);
-    const r2 = Math.floor(Math.random() * 1000000000);
-    const randomBase = BigInt(r1) * BigInt(r2);
-    
-    // Mix them
-    const generatedIdVal = randomBase * ipNum;
-    
-    // Convert to Hex, Pad, Slice to 16
-    const newPeerId = generatedIdVal.toString(16).padStart(16, '0').slice(-16).toUpperCase(); 
 
-    ws.id = newPeerId;
+wss.on('connection', (ws, req) => {
+    // 1. Initial Handshake - Wait for IP
     ws.isAlive = true; 
     ws.on('pong', () => { ws.isAlive = true; }); 
 
-    // 3. Default Name
-    const defaultName = `Anonymous ${anonymousCounter++}`;
-    
-    // Store
-    peerSockets.set(ws.id, ws);
-    peerInfo.set(ws.id, { name: defaultName, ip: null }); // Initial IP is null
-
-    const time = new Date().toLocaleTimeString();
-    console.log(`[${time}] Peer connected: ${ws.id} (Waiting for IP)`);
-    
-    // Broadcast to others - Broadcast even if IP is null, they will update on 'peer-updated'
-    broadcast({ 
-        type: 'peer-joined', 
-        peerId: ws.id,
-        name: defaultName,
-        ip: null
-    }, ws.id);
-
-    // Welcome the new peer
-    ws.send(JSON.stringify({ 
-        type: 'welcome', 
-        peerId: ws.id,
-        name: defaultName,
-        ip: null
-    }));
-    
-    // Explicitly send "your-info" (Name & ID) as requested for the App
-    ws.send(JSON.stringify({
-        type: 'your-info',
-        name: defaultName,
-        peerId: ws.id,
-        ip: null
-    }));
-
+    // Send greeting immediately so client knows we are connected
     ws.send(JSON.stringify({ type: 'greeting', message: "Hello welcome I'm the tracker" }));
 
-    // Send existing peers list to the new peer so they can populate their UI
-    const existingPeers = [];
-    peerSockets.forEach((socket, id) => {
-        if (id !== ws.id && socket.readyState === WebSocket.OPEN) {
-            const info = peerInfo.get(id);
-            existingPeers.push({
-                peerId: id,
-                name: info ? info.name : 'Unknown',
-                ip: info ? info.ip : 'Unknown'
-            });
-        }
-    });
-    
-    // Always send the snapshot, even if empty, so client knows it has received the list
-    ws.send(JSON.stringify({ type: 'peer-list-snapshot', peers: existingPeers }));
+    const time = new Date().toLocaleTimeString();
+    console.log(`[${time}] Socket connected (Waiting for IP...)`);
 
     ws.on('message', (message) => {
         try {
@@ -127,70 +62,157 @@ wss.on('connection', (ws, req) => {
     });
 
     ws.on('close', () => {
-        console.log(`Peer disconnected: ${ws.id}`);
-        // Capture info before cleanup for broadcast
-        const info = peerInfo.get(ws.id);
-        const name = info ? info.name : 'Unknown';
-
-        cleanupPeer(ws.id);
-        
-        // Broadcast disconnect
-        broadcast({ 
-            type: 'peer-left', 
-            peerId: ws.id,
-            name: name
-        });
+        if (ws.id) { // Only clean up if fully registered
+            console.log(`Peer disconnected: ${ws.id}`);
+            // Capture info before cleanup for broadcast
+            const info = peerInfo.get(ws.id);
+            const name = info ? info.name : 'Unknown';
+    
+            cleanupPeer(ws.id);
+            
+            // Broadcast disconnect
+            broadcast({ 
+                type: 'peer-left', 
+                peerId: ws.id,
+                name: name
+            });
+        } else {
+             console.log(`[${new Date().toLocaleTimeString()}] Unregistered socket disconnected`);
+        }
     });
 });
 
 function broadcast(data, excludePeerId = null) {
     wss.clients.forEach(client => {
-        if (client.readyState === WebSocket.OPEN && client.id !== excludePeerId) {
+        if (client.readyState === WebSocket.OPEN && client.id && client.id !== excludePeerId) {
             client.send(JSON.stringify(data));
         }
     });
 }
 
+// Helper to register a new peer once IP is received
+function registerNewPeer(ws, ipAddress) {
+    const ip = normalizeIp(ipAddress);
+    
+    // 1. Generate ID
+    // IP Number - Default to 1 if null (though we expect an IP now)
+    const ipNum = 1n; 
+    
+    const r1 = Math.floor(Math.random() * 1000000000);
+    const r2 = Math.floor(Math.random() * 1000000000);
+    const randomBase = BigInt(r1) * BigInt(r2);
+    
+    const generatedIdVal = randomBase * ipNum;
+    const newPeerId = generatedIdVal.toString(16).padStart(16, '0').slice(-16).toUpperCase(); 
+
+    ws.id = newPeerId;
+
+    // 2. Generate Name
+    const defaultName = `Anonymous ${anonymousCounter++}`;
+    
+    // 3. Store
+    peerSockets.set(ws.id, ws);
+    peerInfo.set(ws.id, { name: defaultName, ip: ip });
+
+    const time = new Date().toLocaleTimeString();
+    console.log(`[${time}] Peer Registered: ${ws.id} (IP: ${ip})`);
+    
+    // 4. Broadcast to others
+    broadcast({ 
+        type: 'peer-joined', 
+        peerId: ws.id,
+        name: defaultName,
+        ip: ip
+    }, ws.id);
+
+    // 5. Send Welcome & Info to Client
+    ws.send(JSON.stringify({ 
+        type: 'welcome', 
+        peerId: ws.id,
+        name: defaultName,
+        ip: ip
+    }));
+    
+    ws.send(JSON.stringify({
+        type: 'your-info',
+        name: defaultName,
+        peerId: ws.id,
+        ip: ip
+    }));
+    
+    ws.send(JSON.stringify({ 
+        type: 'registered', 
+        ip: ip,
+        peerId: ws.id,
+        name: defaultName
+    }));
+
+    // 6. Send Peers List Snapshot
+    const existingPeers = [];
+    peerSockets.forEach((socket, id) => {
+        if (id !== ws.id && socket.readyState === WebSocket.OPEN) {
+            const info = peerInfo.get(id);
+            existingPeers.push({
+                peerId: id,
+                name: info ? info.name : 'Unknown',
+                ip: info ? info.ip : 'Unknown'
+            });
+        }
+    });
+    ws.send(JSON.stringify({ type: 'peer-list-snapshot', peers: existingPeers }));
+}
+
 function handleMessage(ws, data) {
     switch (data.type) {
         case 'register':
-            // Client registering with specific IP/Port (From APK)
+            // Client registering with specific IP
             if (data.ip) {
-                const info = peerInfo.get(ws.id);
-                if (info) {
-                    // Update IP
-                    info.ip = normalizeIp(data.ip);
-                    peerInfo.set(ws.id, info);
-                    
-                    console.log(`Peer ${ws.id} registered with custom IP: ${info.ip}`);
-                    
-                    // Broadcast update to others
-                    broadcast({
-                        type: 'peer-updated',
-                        peerId: ws.id,
-                        name: info.name,
-                        ip: info.ip
-                    });
-                    
-                    // Acknowledge registration and send back the assigned IP
-                    ws.send(JSON.stringify({ 
-                        type: 'registered', 
-                        ip: info.ip,
-                        peerId: ws.id,
-                        name: info.name
-                    }));
+                if (!ws.id) {
+                     // First time registration
+                     registerNewPeer(ws, data.ip);
+                } else {
+                    // Already registered, just updating IP?
+                    const info = peerInfo.get(ws.id);
+                    if (info) {
+                        // Update IP
+                        const newIp = normalizeIp(data.ip);
+                        if (info.ip !== newIp) {
+                            info.ip = newIp;
+                            peerInfo.set(ws.id, info);
+                            
+                            console.log(`Peer ${ws.id} updated IP: ${info.ip}`);
+                            
+                            // Broadcast update to others
+                            broadcast({
+                                type: 'peer-updated',
+                                peerId: ws.id,
+                                name: info.name,
+                                ip: info.ip
+                            });
+                        }
+                        
+                        // Always acknowledge register logic to keep client happy
+                        ws.send(JSON.stringify({ 
+                            type: 'registered', 
+                            ip: info.ip,
+                            peerId: ws.id,
+                            name: info.name
+                        }));
+                    }
                 }
             }
             break;
 
         case 'identify':
+            // Only allow identify if already registered
+             if (!ws.id) return; 
+
             // Client identifying themselves with a name AND/OR IP
             if (data.name || data.ip) {
                 const info = peerInfo.get(ws.id);
                 if (info) {
                     if (data.name) info.name = data.name;
                     if (data.ip) {
-                        // Validate/Normalize IP if needed
                         info.ip = normalizeIp(data.ip);
                         console.log(`Peer ${ws.id} updated IP to ${info.ip}`);
                     }
@@ -204,7 +226,6 @@ function handleMessage(ws, data) {
                         ip: info.ip
                     });
                     
-                    // Acknowledge (optional, but good for logs)
                     ws.send(JSON.stringify({ type: 'identity-confirmed', name: info.name, ip: info.ip }));
                 }
             }
