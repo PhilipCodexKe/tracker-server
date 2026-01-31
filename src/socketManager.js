@@ -1,4 +1,5 @@
 const WebSocket = require('ws');
+// forcing update
 const { files, peerSockets, peerInfo, getNextAnonymousName } = require('./store');
 const { ipToNumber, normalizeIp } = require('./utils');
 const { handleMessage } = require('./handlers');
