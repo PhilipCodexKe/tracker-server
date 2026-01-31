@@ -3,7 +3,7 @@ const http = require('http');
 const WebSocket = require('ws');
 const cors = require('cors');
 const path = require('path');
-const { initializeSockets } = require('./socketManager');
+const { initializeSockets } = require('./socket-manager');
 
 const app = express();
 app.use(cors());
