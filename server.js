@@ -30,15 +30,7 @@ const peerInfo = new Map();
 
 let anonymousCounter = 1;
 
-function ipToNumber(ip) {
-    if (!ip) return 1;
-    // Remove all non-numeric characters (simple hash-ish way or just use octets)
-    // For IPv4 "192.168.1.1" -> 19216811
-    // For IPv6 it might be huge, so let's stick to a safe numeric generation
-    const cleanIp = ip.replace(/\D/g, '') || '1';
-    // Use BigInt to handle potential length, though simple JS number usually suffices for this logic
-    return parseInt(cleanIp.substring(0, 15), 10); 
-}
+
 
 function normalizeIp(ip) {
     if (!ip) return '127.0.0.1';
@@ -49,15 +41,14 @@ function normalizeIp(ip) {
 }
 
 wss.on('connection', (ws, req) => {
-    // 1. Get IP Address
-    let rawIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress || '127.0.0.1';
-    if (Array.isArray(rawIp)) rawIp = rawIp[0];
-    const ip = normalizeIp(rawIp);
+    // 1. Get IP Address - REMOVED OLD LOGIC
+    // We do NOT guess the IP from the socket anymore. We wait for the 'register' message.
+    const ip = null; 
     
     // 2. Generate ID: Random * IP-based-number to get 16-digit ID
     // We use a large random base to ensure we have enough digits
-    // IP Number
-    const ipNum = BigInt(ipToNumber(ip));
+    // IP Number - Default to 1 since we don't have IP yet
+    const ipNum = 1n;
     
     // Large Random (composite to ensure high magnitude)
     const r1 = Math.floor(Math.random() * 1000000000);
@@ -65,7 +56,7 @@ wss.on('connection', (ws, req) => {
     const randomBase = BigInt(r1) * BigInt(r2);
     
     // Mix them
-    const generatedIdVal = randomBase * (ipNum || 1n);
+    const generatedIdVal = randomBase * ipNum;
     
     // Convert to Hex, Pad, Slice to 16
     const newPeerId = generatedIdVal.toString(16).padStart(16, '0').slice(-16).toUpperCase(); 
@@ -79,17 +70,17 @@ wss.on('connection', (ws, req) => {
     
     // Store
     peerSockets.set(ws.id, ws);
-    peerInfo.set(ws.id, { name: defaultName, ip: ip });
+    peerInfo.set(ws.id, { name: defaultName, ip: null }); // Initial IP is null
 
     const time = new Date().toLocaleTimeString();
-    console.log(`[${time}] Peer connected: ${ws.id} (${ip})`);
+    console.log(`[${time}] Peer connected: ${ws.id} (Waiting for IP)`);
     
-    // Broadcast to others
+    // Broadcast to others - Broadcast even if IP is null, they will update on 'peer-updated'
     broadcast({ 
         type: 'peer-joined', 
         peerId: ws.id,
         name: defaultName,
-        ip: ip
+        ip: null
     }, ws.id);
 
     // Welcome the new peer
@@ -97,7 +88,7 @@ wss.on('connection', (ws, req) => {
         type: 'welcome', 
         peerId: ws.id,
         name: defaultName,
-        ip: ip
+        ip: null
     }));
     
     // Explicitly send "your-info" (Name & ID) as requested for the App
@@ -105,7 +96,7 @@ wss.on('connection', (ws, req) => {
         type: 'your-info',
         name: defaultName,
         peerId: ws.id,
-        ip: ip
+        ip: null
     }));
 
     ws.send(JSON.stringify({ type: 'greeting', message: "Hello welcome I'm the tracker" }));
@@ -181,8 +172,13 @@ function handleMessage(ws, data) {
                         ip: info.ip
                     });
                     
-                    // Optional: Acknowledge registration
-                    // ws.send(JSON.stringify({ type: 'registered', ip: info.ip }));
+                    // Acknowledge registration and send back the assigned IP
+                    ws.send(JSON.stringify({ 
+                        type: 'registered', 
+                        ip: info.ip,
+                        peerId: ws.id,
+                        name: info.name
+                    }));
                 }
             }
             break;
