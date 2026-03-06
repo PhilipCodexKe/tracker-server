@@ -85,19 +85,22 @@ wss.on('connection', (ws, req) => {
 
     ws.on('close', () => {
         if (ws.id) { // Only clean up if fully registered
-            console.log(`Peer disconnected: ${ws.id}`);
-            // Capture info before cleanup for broadcast
             const info = peerInfo.get(ws.id);
             const name = info ? info.name : 'Unknown';
+            const roomKey = info ? info.roomKey : null;
+
+            console.log(`Peer disconnected: ${ws.id} from room: ${roomKey}`);
     
             cleanupPeer(ws.id);
             
-            // Broadcast disconnect
-            broadcast({ 
-                type: 'peer-left', 
-                peerId: ws.id,
-                name: name
-            });
+            // Broadcast disconnect if peer was in a room
+            if (roomKey) {
+                broadcast({ 
+                    type: 'peer-left', 
+                    peerId: ws.id,
+                    name: name
+                }, ws.id, roomKey);
+            }
         } else {
              console.log(`[${new Date().toLocaleTimeString()}] Unregistered socket disconnected`);
         }
