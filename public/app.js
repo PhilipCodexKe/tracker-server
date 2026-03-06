@@ -11,6 +11,13 @@ const logHistory = [];
 
 let ws;
 let myPeerId;
+let currentRoomKey = null;
+let myRole = null; // 'host' or 'guest'
+
+// UI Elements
+const roomOverlay = document.getElementById('room-overlay');
+const roomKeyInput = document.getElementById('room-key-input');
+const joinBtn = document.getElementById('join-btn');
 
 function updateClock() {
     const now = new Date();
@@ -81,17 +88,31 @@ function connect() {
             
             switch (data.type) {
                 case 'welcome':
-                    log(`Identity assigned: ${data.peerId}`, 'success');
-                    document.title = `NODE: ${data.peerId.substring(0, 8)}...`;
+                    log(`Identity confirmed. Cluster Access Granted.`, 'success');
+                    log(`Peer ID: ${data.peerId}`, 'system');
+                    log(`Room Key: ${data.roomKey}`, 'system');
+                    log(`Role: ${data.role.toUpperCase()}`, 'system');
+                    
+                    document.title = `NODE: ${data.peerId.substring(0, 8)}... [${data.roomKey}] (${data.role})`;
+                    document.querySelector('.status').innerText = `STATUS: [ONLINE] - ROLE: ${data.role.toUpperCase()}`;
                     
                     myPeerId = data.peerId;
+                    currentRoomKey = data.roomKey;
+                    myRole = data.role;
                     
+                    // Hide overlay if still visible
+                    roomOverlay.style.display = 'none';
+
                     // Add Self to List
                     connectedPeers.set(data.peerId, { 
                         name: data.name + " (YOU)", 
                         ip: data.ip 
                     });
                     updatePeersList();
+                    break;
+                
+                case 'connection-log':
+                    log(`[LOG] ${data.message}`, data.level || 'info');
                     break;
 
                 case 'greeting':
@@ -130,9 +151,20 @@ function connect() {
                     updatePeersList();
                     break;
                 case 'peer-list-snapshot':
-                    // Initial load of existing peers
+                    // Initial load of existing peers - LATE JOINER LOGIC
+                    log(`Discovered ${data.peers.length} existing peers in cluster. Initiating handshakes...`, 'system');
                     data.peers.forEach(p => {
                         connectedPeers.set(p.peerId, { name: p.name, ip: p.ip });
+                        
+                        // Perform handshake with this existing peer
+                        log(`[HANDSHAKE] Sending offer to ${p.name || p.peerId}...`, 'info');
+                        const mockSdpOffer = { type: 'offer', sdp: `v=0... (mesh offer for ${p.peerId})` };
+                        ws.send(JSON.stringify({
+                            type: 'signal',
+                            to: p.peerId,
+                            signal: mockSdpOffer,
+                            isInitial: true // Mark as initial handshake request
+                        }));
                     });
                     updatePeersList();
                     break;
@@ -145,7 +177,21 @@ function connect() {
                     log(`Swarm update: ${data.peers.length} active peers for file`, 'info');
                     break;
                 case 'signal':
-                    log(`Encrypted signal received from ${data.from}`, 'info');
+                    log(`Signal received from ${data.from}. Proceeding with handshake...`, 'system');
+                    if (data.isInitial) {
+                        log(`Received initial SDP offer from ${data.from}. Generating answer...`, 'info');
+                        // Simulation of WebRTC Answer
+                        setTimeout(() => {
+                            ws.send(JSON.stringify({
+                                type: 'signal',
+                                to: data.from,
+                                signal: { type: 'answer', sdp: 'v=0... (simulated answer)' }
+                            }));
+                        }, 1000);
+                    } else if (data.signal && data.signal.type === 'answer') {
+                        log(`Received SDP answer from host. Finalizing P2P sync...`, 'success');
+                        log(`P2P Connection ESTABLISHED via hole punching.`, 'success');
+                    }
                     break;
                 default:
                     log(`Data received: ${data.type}`);
@@ -165,6 +211,43 @@ function connect() {
         ws.close();
     };
 }
+
+function joinRoom() {
+    const key = roomKeyInput.value.trim().toUpperCase();
+    if (!key) {
+        alert("Please enter a room key.");
+        return;
+    }
+
+    currentRoomKey = key;
+    roomOverlay.style.display = 'none';
+    
+    // Connect to server
+    connect();
+
+    // After connecting, we need to send the join-room message.
+    // We'll wait for the greeting or onopen to send it.
+    // To ensure it sends AFTER connection, we'll wrap it.
+    const originalOnOpen = ws.onopen;
+    ws.onopen = (e) => {
+        if (originalOnOpen) originalOnOpen(e);
+        log(`Negotiating entry into room ${key}...`, 'system');
+        
+        // Join the room. Handshakes will be initiated upon receiving 'peer-list-snapshot'
+        ws.send(JSON.stringify({
+            type: 'join-room',
+            roomKey: key
+        }));
+    };
+}
+
+joinBtn.addEventListener('click', joinRoom);
+roomKeyInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') joinRoom();
+});
+
+// Focus room input on load
+window.onload = () => roomKeyInput.focus();
 
 // Chat Input Handling
 const chatInput = document.getElementById('chat-input');
@@ -197,5 +280,5 @@ chatInput.addEventListener('keydown', (e) => {
 // Keep focus
 document.addEventListener('click', () => chatInput.focus());
 
-// Start
-connect();
+// Start (Wait for user)
+// connect(); removed - triggered by joinRoom()

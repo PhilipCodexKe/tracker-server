@@ -27,8 +27,29 @@ app.get('/', (req, res) => {
 const files = new Map();
 const peerSockets = new Map();
 const peerInfo = new Map();
+const rooms = new Map(); // [NEW] roomKey -> Set<PeerId>
 
-let anonymousCounter = 1;
+function getAvailableAnonymousName() {
+    const usedIndices = new Set();
+    
+    // Check all active peers in rooms
+    peerInfo.forEach(info => {
+        const match = info.name && info.name.match(/^Anonymous (\d+)$/);
+        if (match) usedIndices.add(parseInt(match[1]));
+    });
+
+    // Check sockets that are registered but haven't 'joined' a room yet
+    peerSockets.forEach(ws => {
+        if (ws.defaultName) {
+            const match = ws.defaultName.match(/^Anonymous (\d+)$/);
+            if (match) usedIndices.add(parseInt(match[1]));
+        }
+    });
+
+    let i = 1;
+    while (usedIndices.has(i)) i++;
+    return `Anonymous ${i}`;
+}
 
 
 
@@ -83,10 +104,18 @@ wss.on('connection', (ws, req) => {
     });
 });
 
-function broadcast(data, excludePeerId = null) {
-    wss.clients.forEach(client => {
-        if (client.readyState === WebSocket.OPEN && client.id && client.id !== excludePeerId) {
-            client.send(JSON.stringify(data));
+function broadcast(data, excludePeerId = null, roomKey = null) {
+    if (!roomKey) return; // Disallow global broadcast for room-based tracker
+
+    const roomPeers = rooms.get(roomKey);
+    if (!roomPeers) return;
+
+    roomPeers.forEach(peerId => {
+        if (peerId !== excludePeerId) {
+            const client = peerSockets.get(peerId);
+            if (client && client.readyState === WebSocket.OPEN) {
+                client.send(JSON.stringify(data));
+            }
         }
     });
 }
@@ -122,119 +151,132 @@ function registerNewPeer(ws, ipData) {
 
     ws.id = newPeerId;
 
-    // 2. Generate Name
-    const defaultName = `Anonymous ${anonymousCounter++}`;
+    // 2. Assign Default Name (Reuse index if available)
+    ws.defaultName = getAvailableAnonymousName();
     
     // 3. Store
     peerSockets.set(ws.id, ws);
-    peerInfo.set(ws.id, { 
-        name: defaultName, 
-        ip: primaryIp,
-        ips: ips 
-    });
+}
 
-    const time = new Date().toLocaleTimeString();
-    console.log(`[${time}] Peer Registered: ${ws.id} (IP: ${primaryIp})`);
-    
-    // 4. Broadcast to others
-    broadcast({ 
-        type: 'peer-joined', 
-        peerId: ws.id,
-        name: defaultName,
-        ip: primaryIp,
-        ips: ips
-    }, ws.id);
+function sendLog(peerId, message, level = 'info') {
+    const ws = peerSockets.get(peerId);
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'connection-log', message, level }));
+    }
+}
 
-    // 5. Send Welcome & Info to Client
-    ws.send(JSON.stringify({ 
-        type: 'welcome', 
-        peerId: ws.id,
-        name: defaultName,
-        ip: primaryIp,
-        ips: ips
-    }));
+function finalizeRegistration(ws, roomKey, name, ips) {
+    const peerId = ws.id;
+    if (!peerId) return;
+
+    const primaryIp = normalizeIp(ips.public || ips.local || '127.0.0.1');
     
-    ws.send(JSON.stringify({
-        type: 'your-info',
-        name: defaultName,
-        peerId: ws.id,
-        ip: primaryIp,
-        ips: ips
-    }));
-    
-    ws.send(JSON.stringify({ 
-        type: 'registered', 
+    // Store Peer Info
+    peerInfo.set(peerId, { 
+        name: name, 
         ip: primaryIp,
         ips: ips,
-        peerId: ws.id,
-        name: defaultName
+        roomKey: roomKey
+    });
+
+    // Add to Room
+    if (!rooms.has(roomKey)) {
+        rooms.set(roomKey, new Set());
+    }
+    const roomPeersSet = rooms.get(roomKey);
+    const isHost = roomPeersSet.size === 0;
+    roomPeersSet.add(peerId);
+    ws.roomKey = roomKey;
+
+    const time = new Date().toLocaleTimeString();
+    console.log(`[${time}] Peer ${peerId} joined room: ${roomKey} as ${isHost ? 'HOST' : 'GUEST'}`);
+
+    // Notify Peer of their role
+    ws.send(JSON.stringify({ 
+        type: 'welcome', 
+        peerId: peerId,
+        name: name,
+        ip: primaryIp,
+        ips: ips,
+        roomKey: roomKey,
+        role: isHost ? 'host' : 'guest'
     }));
 
-    // 6. Send Peers List Snapshot
-    const existingPeers = [];
-    peerSockets.forEach((socket, id) => {
-        if (id !== ws.id && socket.readyState === WebSocket.OPEN) {
+    sendLog(peerId, `SYSTEM_READY: Joined room ${roomKey} as ${isHost ? 'HOST' : 'GUEST'}.`, 'success');
+
+    if (!isHost) {
+         // Notify existing peers that a new guest is here
+         // The guest will initiate handshakes upon receiving the snapshot
+         broadcast({ 
+            type: 'peer-joined', 
+            peerId: peerId,
+            name: name,
+            ip: primaryIp,
+            ips: ips
+        }, peerId, roomKey);
+    }
+
+    // Send Peers List Snapshot (ROOM ONLY)
+    const roomPeers = [];
+    roomPeersSet.forEach(id => {
+        if (id !== peerId) {
             const info = peerInfo.get(id);
-            existingPeers.push({
-                peerId: id,
-                name: info ? info.name : 'Unknown',
-                ip: info ? info.ip : 'Unknown',
-                ips: info ? info.ips : null
-            });
+            if (info) {
+                roomPeers.push({
+                    peerId: id,
+                    name: info.name,
+                    ip: info.ip,
+                    ips: info.ips
+                });
+            }
         }
     });
-    ws.send(JSON.stringify({ type: 'peer-list-snapshot', peers: existingPeers }));
+    ws.send(JSON.stringify({ type: 'peer-list-snapshot', peers: roomPeers }));
 }
 
 function handleMessage(ws, data) {
     switch (data.type) {
-        case 'register':
-            // Client registering with specific IP
-            if (data.ip) {
+        case 'join-room':
+            // New preferred registration method
+            // Payload: { roomKey, name, ips }
+            if (data.roomKey) {
                 if (!ws.id) {
-                     // First time registration
-                     registerNewPeer(ws, data.ip);
-                } else {
-                    // Update IP logic if needed (legacy)
-                    // ...
+                    registerNewPeer(ws, data.ips || {});
                 }
+                finalizeRegistration(ws, data.roomKey, data.name || ws.defaultName, data.ips || {});
+            }
+            break;
+
+        case 'register':
+            // Legacy support
+            if (data.ip && !ws.id) {
+                registerNewPeer(ws, data.ip);
             }
             break;
 
         case 'identify':
-            // [NEW] Handle Identity Message with IPs
             if (data.ips) {
                 ws.ipInfo = data.ips;
-                console.log(`Peer identified with IPs:`, ws.ipInfo);
-
-                // If not registered, this IS the registration
                 if (!ws.id) {
                     registerNewPeer(ws, data.ips);
-                    return; 
-                }
-                
-                // If already registered, update info
-                const info = peerInfo.get(ws.id);
-                if (info) {
-                    info.ips = data.ips;
-                    // Update primary IP if public is available
-                    if (data.ips.public) info.ip = normalizeIp(data.ips.public);
-                    else if (data.ips.local) info.ip = normalizeIp(data.ips.local);
-                    
-                    peerInfo.set(ws.id, info);
-                    
-                    broadcast({
-                        type: 'peer-updated',
-                        peerId: ws.id,
-                        name: info.name,
-                        ip: info.ip,
-                        ips: info.ips
-                    });
+                } else if (ws.roomKey) {
+                    const info = peerInfo.get(ws.id);
+                    if (info) {
+                        info.ips = data.ips;
+                        if (data.ips.public) info.ip = normalizeIp(data.ips.public);
+                        peerInfo.set(ws.id, info);
+                        broadcast({
+                            type: 'peer-updated',
+                            peerId: ws.id,
+                            name: info.name,
+                            ip: info.ip,
+                            ips: info.ips
+                        }, ws.id, ws.roomKey);
+                    }
                 }
             }
 
-            // Normal identify logic (Name update)
-            if (data.name && ws.id) {
+            if (data.name && ws.id && ws.roomKey) {
                 const info = peerInfo.get(ws.id);
                 if (info) {
                     info.name = data.name;
@@ -245,10 +287,11 @@ function handleMessage(ws, data) {
                         name: info.name,
                         ip: info.ip,
                         ips: info.ips
-                    });
+                    }, ws.id, ws.roomKey);
                     ws.send(JSON.stringify({ type: 'identity-confirmed', name: info.name, ip: info.ip }));
                 }
             }
+            break;
             break;
 
         case 'announce':
@@ -273,15 +316,16 @@ function handleMessage(ws, data) {
                 
                 if (swarm) {
                     swarm.forEach(peerId => {
-                        // Don't send back the requester's own ID
                         if (peerId !== ws.id && peerSockets.has(peerId)) {
-                             // [UPDATED] Push object with ID and IPs
                              const info = peerInfo.get(peerId);
-                             activePeers.push({
-                                peerId: peerId,
-                                ips: info ? info.ips : null,
-                                ip: info ? info.ip : null // Keep legacy support
-                            });
+                             // ONLY return peers in the same room
+                             if (info && info.roomKey === ws.roomKey) {
+                                activePeers.push({
+                                    peerId: peerId,
+                                    ips: info.ips,
+                                    ip: info.ip
+                                });
+                             }
                         }
                     });
                 }
@@ -307,7 +351,7 @@ function handleMessage(ws, data) {
                     message: data.message,
                     from: senderName,
                     peerId: ws.id
-                }, ws.id); 
+                }, ws.id, ws.roomKey); 
             }
             break;
 
@@ -330,7 +374,7 @@ function handleMessage(ws, data) {
                         message: text,
                         from: senderName,
                         peerId: ws.id
-                    }, ws.id);
+                    }, ws.id, ws.roomKey);
                 }
             }
             break;
@@ -346,8 +390,13 @@ function handleMessage(ws, data) {
                         from: ws.id,
                         signal: data.signal
                     }));
+
+                    // Log signaling progress
+                    sendLog(ws.id, `SIGNAL_RELAY: Sent signal to ${data.to}`, 'info');
+                    sendLog(data.to, `SIGNAL_INCOMING: Received signal from ${ws.id}`, 'info');
                 } else {
                     console.warn(`Signal failed: Target ${data.to} not found or offline`);
+                    sendLog(ws.id, `SIGNAL_ERROR: Target ${data.to} is offline.`, 'error');
                 }
             }
             break;
@@ -358,7 +407,17 @@ function handleMessage(ws, data) {
 }
 
 function cleanupPeer(peerId) {
-    // Remove from socket map
+    const info = peerInfo.get(peerId);
+    if (info && info.roomKey) {
+        const roomPeers = rooms.get(info.roomKey);
+        if (roomPeers) {
+            roomPeers.delete(peerId);
+            if (roomPeers.size === 0) {
+                rooms.delete(info.roomKey);
+            }
+        }
+    }
+
     peerSockets.delete(peerId);
     peerInfo.delete(peerId);
 

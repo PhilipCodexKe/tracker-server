@@ -17,7 +17,16 @@
         <div class="output" id="output">
             <div class="line">Initializing system...</div>
             <div class="line">Loading modules... [OK]</div>
-            <div class="line">Connecting to swarm...</div>
+            <div class="line">Awaiting room key...</div>
+        </div>
+
+        <div id="room-overlay" class="overlay">
+            <div class="overlay-content">
+                <div class="glitch-text" data-text="ACCESS_REQUIRED">ACCESS_REQUIRED</div>
+                <p>Enter encrypted room key to join cluster:</p>
+                <input type="text" id="room-key-input" placeholder="ROOM_KEY_AUTH" autocomplete="off">
+                <button id="join-btn">ESTABLISH_CONNECTION</button>
+            </div>
         </div>
         
         <div class="peers-header">--- CONNECTED PEERS ---</div>
